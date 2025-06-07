@@ -30,7 +30,7 @@
 
 1.  克隆仓库:
     ```bash
-    git clone https://github.com/your-username/diff-code-assistant.git
+    git clone https://github.com/10020099/Diff-Code-Assistant.git
     cd diff-code-assistant
     ```
 
