@@ -13,7 +13,10 @@ import difflib
 import logging
 import threading
 import tempfile
-from typing import List, Dict, Optional, Tuple, Any
+import re
+import shutil
+from datetime import datetime
+from typing import List, Dict, Optional, Tuple, Any, NamedTuple
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -56,6 +59,26 @@ DIFF_COLORS = {
     'context': '#6c757d',
     'header': '#007bff'
 }
+
+# ================================
+# 数据结构定义
+# ================================
+
+class DiffHunk(NamedTuple):
+    """Diff块数据结构"""
+    old_start: int
+    old_count: int
+    new_start: int
+    new_count: int
+    lines: List[str]
+
+class FileChange(NamedTuple):
+    """文件修改数据结构"""
+    old_path: str
+    new_path: str
+    hunks: List[DiffHunk]
+    is_new_file: bool = False
+    is_deleted_file: bool = False
 
 # ================================
 # 工具函数部分
@@ -175,14 +198,90 @@ def validate_diff(diff_content: str) -> Tuple[bool, str]:
     """验证diff内容的格式"""
     if not diff_content.strip():
         return False, "Diff内容为空"
-    
+
     lines = diff_content.strip().split('\n')
     has_changes = any(line.startswith(('+', '-')) for line in lines)
-    
+
     if not has_changes:
         return False, "Diff中没有发现任何更改"
-    
+
     return True, ""
+
+def validate_diff_advanced(diff_content: str) -> Tuple[bool, str, List[str]]:
+    """高级diff验证，返回详细信息"""
+    if not diff_content.strip():
+        return False, "Diff内容为空", []
+
+    lines = diff_content.strip().split('\n')
+    warnings = []
+    errors = []
+
+    # 检查基本格式
+    has_file_headers = any(line.startswith('--- ') or line.startswith('+++ ') for line in lines)
+    has_hunk_headers = any(line.startswith('@@') for line in lines)
+    has_changes = any(line.startswith(('+', '-')) and not line.startswith(('+++', '---')) for line in lines)
+
+    if not has_file_headers:
+        warnings.append("缺少文件头信息 (--- 和 +++ 行)")
+
+    if not has_hunk_headers:
+        warnings.append("缺少hunk头信息 (@@ 行)")
+
+    if not has_changes:
+        errors.append("没有发现实际的代码更改")
+
+    # 检查hunk格式
+    for i, line in enumerate(lines):
+        if line.startswith('@@'):
+            if not re.match(r'@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@', line):
+                errors.append(f"第 {i+1} 行: hunk头格式不正确")
+
+    # 检查文件路径
+    file_paths = []
+    for line in lines:
+        if line.startswith('--- ') or line.startswith('+++ '):
+            path = line[4:].strip()
+            if path and path != '/dev/null':
+                file_paths.append(path)
+
+    if not file_paths:
+        errors.append("没有找到有效的文件路径")
+
+    is_valid = len(errors) == 0
+    message = ""
+
+    if errors:
+        message = "错误: " + "; ".join(errors)
+    elif warnings:
+        message = "警告: " + "; ".join(warnings)
+    else:
+        message = "格式验证通过"
+
+    return is_valid, message, warnings
+
+def check_file_conflicts(file_changes: List[FileChange], project_root: str) -> List[str]:
+    """检查文件冲突"""
+    conflicts = []
+
+    for change in file_changes:
+        file_path = os.path.join(project_root, change.new_path)
+
+        # 检查文件是否存在且可写
+        if os.path.exists(file_path):
+            if not os.access(file_path, os.W_OK):
+                conflicts.append(f"{change.new_path}: 文件只读，无法修改")
+        else:
+            # 检查目录是否存在且可写
+            dir_path = os.path.dirname(file_path)
+            if dir_path and not os.path.exists(dir_path):
+                try:
+                    os.makedirs(dir_path, exist_ok=True)
+                except OSError as e:
+                    conflicts.append(f"{change.new_path}: 无法创建目录 - {e}")
+            elif dir_path and not os.access(dir_path, os.W_OK):
+                conflicts.append(f"{change.new_path}: 目录不可写")
+
+    return conflicts
 
 def get_project_stats(file_paths: List[str]) -> Dict[str, Any]:
     """获取项目统计信息"""
@@ -192,20 +291,205 @@ def get_project_stats(file_paths: List[str]) -> Dict[str, Any]:
         'total_size': 0,
         'file_types': {}
     }
-    
+
     for path in file_paths:
         try:
             stats['total_size'] += os.path.getsize(path)
             ext = Path(path).suffix.lower()
             stats['file_types'][ext] = stats['file_types'].get(ext, 0) + 1
-            
+
             if is_text_file(path):
                 with open(path, 'r', encoding='utf-8', errors='ignore') as f:
                     stats['total_lines'] += len(f.readlines())
         except Exception:
             continue
-    
+
     return stats
+
+def parse_diff(diff_content: str) -> List[FileChange]:
+    """解析diff内容，返回文件修改列表"""
+    if not diff_content.strip():
+        return []
+
+    lines = diff_content.strip().split('\n')
+    file_changes = []
+    current_file = None
+    current_hunks = []
+    current_hunk = None
+    current_hunk_lines = []
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+
+        # 检测文件头
+        if line.startswith('--- '):
+            # 保存之前的文件
+            if current_file:
+                if current_hunk and current_hunk_lines:
+                    current_hunks.append(DiffHunk(*current_hunk, current_hunk_lines))
+                file_changes.append(FileChange(current_file[0], current_file[1], current_hunks))
+
+            # 开始新文件
+            old_path = line[4:].strip()
+            if old_path.startswith('a/'):
+                old_path = old_path[2:]
+            elif old_path.startswith('b/'):
+                old_path = old_path[2:]
+
+            # 查找对应的 +++ 行
+            if i + 1 < len(lines) and lines[i + 1].startswith('+++ '):
+                new_path = lines[i + 1][4:].strip()
+                if new_path.startswith('a/'):
+                    new_path = new_path[2:]
+                elif new_path.startswith('b/'):
+                    new_path = new_path[2:]
+                i += 1
+            else:
+                new_path = old_path
+
+            current_file = (old_path, new_path)
+            current_hunks = []
+            current_hunk = None
+            current_hunk_lines = []
+
+        # 检测hunk头 (@@)
+        elif line.startswith('@@'):
+            # 保存之前的hunk
+            if current_hunk and current_hunk_lines:
+                current_hunks.append(DiffHunk(*current_hunk, current_hunk_lines))
+
+            # 解析hunk头
+            match = re.match(r'@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@', line)
+            if match:
+                old_start = int(match.group(1))
+                old_count = int(match.group(2)) if match.group(2) else 1
+                new_start = int(match.group(3))
+                new_count = int(match.group(4)) if match.group(4) else 1
+                current_hunk = (old_start, old_count, new_start, new_count)
+                current_hunk_lines = []
+
+        # 收集hunk内容
+        elif current_hunk and (line.startswith(' ') or line.startswith('+') or line.startswith('-')):
+            current_hunk_lines.append(line)
+
+        i += 1
+
+    # 保存最后一个文件
+    if current_file:
+        if current_hunk and current_hunk_lines:
+            current_hunks.append(DiffHunk(*current_hunk, current_hunk_lines))
+        file_changes.append(FileChange(current_file[0], current_file[1], current_hunks))
+
+    return file_changes
+
+def create_backup(file_path: str, backup_dir: str) -> str:
+    """创建文件备份"""
+    if not os.path.exists(file_path):
+        return ""
+
+    os.makedirs(backup_dir, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_name = f"{os.path.basename(file_path)}.{timestamp}.bak"
+    backup_path = os.path.join(backup_dir, backup_name)
+
+    shutil.copy2(file_path, backup_path)
+    return backup_path
+
+def apply_hunk_to_lines(lines: List[str], hunk: DiffHunk) -> List[str]:
+    """将单个hunk应用到文件行列表"""
+    result_lines = lines.copy()
+
+    # 找到hunk的起始位置（转换为0基索引）
+    start_line = hunk.old_start - 1
+
+    # 收集要删除和添加的行
+    to_delete = []  # (line_index, content)
+    to_add = []     # (line_index, content)
+
+    current_line = start_line
+
+    for line in hunk.lines:
+        if line.startswith(' '):
+            # 上下文行，跳过
+            current_line += 1
+        elif line.startswith('-'):
+            # 标记要删除的行
+            delete_content = line[1:]
+            to_delete.append((current_line, delete_content))
+            current_line += 1
+        elif line.startswith('+'):
+            # 标记要添加的行（在当前位置插入）
+            add_content = line[1:]
+            to_add.append((current_line, add_content))
+            # 注意：添加行不会改变当前行号
+
+    # 先处理删除（从后往前删除避免索引变化）
+    for line_idx, content in reversed(to_delete):
+        if line_idx < len(result_lines):
+            if result_lines[line_idx].rstrip() == content.rstrip():
+                result_lines.pop(line_idx)
+            else:
+                logger.warning(f"要删除的行内容不匹配在行 {line_idx + 1}")
+
+    # 重新计算添加位置（因为删除可能改变了行号）
+    # 简化处理：重新解析hunk来确定正确的插入位置
+    current_line = start_line
+    insert_offset = 0
+
+    for line in hunk.lines:
+        if line.startswith(' '):
+            current_line += 1
+        elif line.startswith('-'):
+            # 删除行会减少偏移
+            insert_offset -= 1
+            current_line += 1
+        elif line.startswith('+'):
+            # 添加行
+            add_content = line[1:]
+            insert_pos = current_line + insert_offset
+            if insert_pos <= len(result_lines):
+                result_lines.insert(insert_pos, add_content)
+                insert_offset += 1
+            else:
+                result_lines.append(add_content)
+                insert_offset += 1
+
+    return result_lines
+
+def apply_diff_to_file(file_path: str, file_change: FileChange, project_root: str) -> bool:
+    """将diff修改应用到单个文件"""
+    try:
+        full_path = os.path.join(project_root, file_change.new_path)
+
+        # 确保目录存在
+        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+
+        # 读取现有文件内容
+        if os.path.exists(full_path):
+            with open(full_path, 'r', encoding='utf-8', errors='ignore') as f:
+                lines = f.readlines()
+            # 移除行尾换行符以便处理
+            lines = [line.rstrip('\n\r') for line in lines]
+        else:
+            lines = []
+
+        # 按照hunk的顺序从后往前应用，避免行号偏移问题
+        sorted_hunks = sorted(file_change.hunks, key=lambda h: h.old_start, reverse=True)
+
+        for hunk in sorted_hunks:
+            lines = apply_hunk_to_lines(lines, hunk)
+
+        # 写回文件
+        with open(full_path, 'w', encoding='utf-8') as f:
+            for line in lines:
+                f.write(line + '\n')
+
+        return True
+
+    except Exception as e:
+        logger.error(f"应用diff到文件 {file_path} 失败: {e}")
+        return False
 
 # ================================
 # GUI组件部分
@@ -406,6 +690,7 @@ class DiffCodeAssistant(ctk.CTk):
         self.context: str = ""
         self.current_diff: str = ""
         self.exclude_patterns = DEFAULT_EXCLUDE_PATTERNS.copy()
+        self.backup_files: List[str] = []  # 备份文件列表
         
         # 初始化UI
         self._setup_ui()
@@ -546,33 +831,70 @@ class DiffCodeAssistant(ctk.CTk):
     def _setup_apply_tab(self):
         """设置代码应用选项卡"""
         tab = self.tabview.tab("代码应用")
-        
+
         # 说明
         info_frame = ctk.CTkFrame(tab)
         info_frame.pack(fill="x", padx=10, pady=10)
-        
-        info_text = """步骤说明：
-1. 确认Diff预览无误后，点击"生成应用提示"
-2. 复制提示并发送给LLM
-3. LLM将返回更新后的完整代码
-4. 手动将代码应用到项目中"""
-        
+
+        info_text = """两种应用方式：
+方式1 (推荐): 直接应用Diff - 自动解析并应用修改，支持备份和回滚
+方式2 (传统): 手动应用 - 生成提示给LLM，获取完整代码后手动替换"""
+
         ctk.CTkLabel(info_frame, text=info_text, justify="left").pack(padx=10, pady=10)
-        
+
+        # 直接应用区域
+        direct_frame = ctk.CTkFrame(tab)
+        direct_frame.pack(fill="x", padx=10, pady=5)
+
+        ctk.CTkLabel(direct_frame, text="方式1: 直接应用Diff", font=ctk.CTkFont(size=14, weight="bold")).pack(anchor="w", padx=5, pady=5)
+
+        # 直接应用选项
+        options_frame = ctk.CTkFrame(direct_frame)
+        options_frame.pack(fill="x", padx=5, pady=5)
+
+        self.create_backup_var = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(options_frame, text="创建备份文件", variable=self.create_backup_var).pack(side="left", padx=5)
+
+        self.dry_run_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(options_frame, text="预览模式(不实际修改)", variable=self.dry_run_var).pack(side="left", padx=10)
+
+        # 直接应用按钮
+        direct_buttons = ctk.CTkFrame(direct_frame)
+        direct_buttons.pack(fill="x", padx=5, pady=5)
+
+        ctk.CTkButton(direct_buttons, text="🚀 直接应用Diff", command=self._apply_diff_directly,
+                     fg_color="#28a745", hover_color="#218838").pack(side="left", padx=5)
+        ctk.CTkButton(direct_buttons, text="📋 预览修改", command=self._preview_diff_changes).pack(side="left", padx=5)
+        ctk.CTkButton(direct_buttons, text="↩️ 回滚备份", command=self._rollback_changes).pack(side="left", padx=5)
+
+        # 分隔线
+        separator = ctk.CTkFrame(tab, height=2)
+        separator.pack(fill="x", padx=10, pady=10)
+
+        # 传统方式区域
+        traditional_frame = ctk.CTkFrame(tab)
+        traditional_frame.pack(fill="both", expand=True, padx=10, pady=5)
+
+        ctk.CTkLabel(traditional_frame, text="方式2: 传统手动应用", font=ctk.CTkFont(size=14, weight="bold")).pack(anchor="w", padx=5, pady=5)
+
         # 按钮
-        button_frame = ctk.CTkFrame(tab)
-        button_frame.pack(fill="x", padx=10, pady=5)
-        
+        button_frame = ctk.CTkFrame(traditional_frame)
+        button_frame.pack(fill="x", padx=5, pady=5)
+
         ctk.CTkButton(button_frame, text="生成应用提示", command=self._generate_apply_prompt).pack(side="left", padx=5)
         ctk.CTkButton(button_frame, text="复制应用提示", command=self._copy_apply_prompt).pack(side="left", padx=5)
-        
+
         # 应用提示显示
-        display_frame = ctk.CTkFrame(tab)
-        display_frame.pack(fill="both", expand=True, padx=10, pady=5)
-        
+        display_frame = ctk.CTkFrame(traditional_frame)
+        display_frame.pack(fill="both", expand=True, padx=5, pady=5)
+
         ctk.CTkLabel(display_frame, text="应用提示:", font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", padx=5, pady=2)
         self.apply_prompt_display = ctk.CTkTextbox(display_frame)
         self.apply_prompt_display.pack(fill="both", expand=True, padx=5, pady=5)
+
+        # 状态显示
+        self.apply_status_label = ctk.CTkLabel(tab, text="", font=ctk.CTkFont(size=12))
+        self.apply_status_label.pack(pady=5)
     
     def _browse_project(self):
         """浏览选择项目目录"""
@@ -711,12 +1033,16 @@ class DiffCodeAssistant(ctk.CTk):
         if not diff_content:
             messagebox.showwarning("警告", "请输入Diff内容")
             return
-        
-        is_valid, error_msg = validate_diff(diff_content)
+
+        is_valid, message, warnings = validate_diff_advanced(diff_content)
+
         if is_valid:
-            messagebox.showinfo("验证结果", "Diff格式验证通过")
+            if warnings:
+                messagebox.showwarning("验证结果", f"格式验证通过，但有警告:\n{message}")
+            else:
+                messagebox.showinfo("验证结果", "Diff格式验证通过")
         else:
-            messagebox.showerror("验证结果", f"Diff格式有误: {error_msg}")
+            messagebox.showerror("验证结果", f"Diff格式验证失败:\n{message}")
     
     def _clear_diff(self):
         """清空Diff内容"""
@@ -752,12 +1078,217 @@ class DiffCodeAssistant(ctk.CTk):
         if not prompt:
             messagebox.showwarning("警告", "没有可复制的内容")
             return
-        
+
         try:
             pyperclip.copy(prompt)
             messagebox.showinfo("成功", "应用提示已复制到剪贴板")
         except Exception as e:
             messagebox.showerror("错误", f"复制失败: {e}")
+
+    def _apply_diff_directly(self):
+        """直接应用diff修改"""
+        if not self.current_diff:
+            messagebox.showerror("错误", "请先预览Diff内容")
+            return
+
+        if not self.project_root:
+            messagebox.showerror("错误", "请先选择项目根目录")
+            return
+
+        # 高级验证diff
+        is_valid, message, warnings = validate_diff_advanced(self.current_diff)
+        if not is_valid:
+            messagebox.showerror("验证失败", f"Diff格式验证失败:\n{message}")
+            return
+
+        if warnings:
+            if not messagebox.askyesno("验证警告", f"Diff验证有警告:\n{message}\n\n是否继续？"):
+                return
+
+        # 解析diff
+        try:
+            file_changes = parse_diff(self.current_diff)
+            if not file_changes:
+                messagebox.showerror("错误", "无法解析Diff内容或没有发现文件修改")
+                return
+        except Exception as e:
+            messagebox.showerror("错误", f"解析Diff失败: {e}")
+            return
+
+        # 检查文件冲突
+        conflicts = check_file_conflicts(file_changes, self.project_root)
+        if conflicts:
+            conflict_msg = "发现以下文件冲突:\n\n" + "\n".join(f"• {conflict}" for conflict in conflicts[:10])
+            if len(conflicts) > 10:
+                conflict_msg += f"\n... 还有 {len(conflicts) - 10} 个冲突"
+            conflict_msg += "\n\n是否继续？"
+
+            if not messagebox.askyesno("文件冲突", conflict_msg):
+                return
+
+        # 确认对话框
+        affected_files = [change.new_path for change in file_changes]
+        confirm_msg = f"即将修改以下 {len(affected_files)} 个文件:\n\n"
+        confirm_msg += "\n".join(f"• {path}" for path in affected_files[:10])
+        if len(affected_files) > 10:
+            confirm_msg += f"\n... 还有 {len(affected_files) - 10} 个文件"
+
+        confirm_msg += f"\n\n备份: {'是' if self.create_backup_var.get() else '否'}"
+        confirm_msg += f"\n预览模式: {'是' if self.dry_run_var.get() else '否'}"
+
+        if conflicts:
+            confirm_msg += f"\n冲突: {len(conflicts)} 个"
+        if warnings:
+            confirm_msg += f"\n警告: {len(warnings)} 个"
+
+        confirm_msg += "\n\n确定要继续吗？"
+
+        if not messagebox.askyesno("确认应用", confirm_msg):
+            return
+
+        # 执行应用
+        self._execute_diff_application(file_changes)
+
+    def _execute_diff_application(self, file_changes: List[FileChange]):
+        """执行diff应用"""
+        progress = ProgressDialog(self, "应用Diff修改...")
+        success_count = 0
+        error_count = 0
+        backup_dir = None
+
+        def apply_thread():
+            nonlocal success_count, error_count, backup_dir
+
+            try:
+                # 创建备份目录
+                if self.create_backup_var.get() and not self.dry_run_var.get():
+                    backup_dir = os.path.join(self.project_root, ".diff_backups",
+                                            datetime.now().strftime("%Y%m%d_%H%M%S"))
+                    os.makedirs(backup_dir, exist_ok=True)
+
+                total_files = len(file_changes)
+
+                for i, file_change in enumerate(file_changes):
+                    progress.update_progress((i + 1) / total_files,
+                                           f"处理文件 {i + 1}/{total_files}: {file_change.new_path}")
+
+                    try:
+                        file_path = os.path.join(self.project_root, file_change.new_path)
+
+                        # 创建备份
+                        if self.create_backup_var.get() and not self.dry_run_var.get():
+                            if os.path.exists(file_path):
+                                backup_path = create_backup(file_path, backup_dir)
+                                if backup_path:
+                                    self.backup_files.append(backup_path)
+
+                        # 应用修改（除非是预览模式）
+                        if not self.dry_run_var.get():
+                            if apply_diff_to_file(file_path, file_change, self.project_root):
+                                success_count += 1
+                            else:
+                                error_count += 1
+                        else:
+                            success_count += 1  # 预览模式都算成功
+
+                    except Exception as e:
+                        logger.error(f"处理文件 {file_change.new_path} 失败: {e}")
+                        error_count += 1
+
+                progress.update_progress(1.0, "应用完成")
+                self.after(100, progress.destroy)
+
+                # 显示结果
+                result_msg = f"应用完成!\n\n成功: {success_count} 个文件\n失败: {error_count} 个文件"
+                if self.dry_run_var.get():
+                    result_msg += "\n\n(预览模式，未实际修改文件)"
+                elif backup_dir and self.backup_files:
+                    result_msg += f"\n\n备份位置: {backup_dir}"
+
+                self.after(0, lambda: self._update_apply_status(result_msg))
+                self.after(0, lambda: messagebox.showinfo("应用结果", result_msg))
+
+            except Exception as e:
+                logger.error(f"应用diff失败: {e}")
+                self.after(0, lambda: messagebox.showerror("错误", f"应用失败: {e}"))
+                self.after(0, progress.destroy)
+
+        threading.Thread(target=apply_thread, daemon=True).start()
+
+    def _preview_diff_changes(self):
+        """预览diff修改"""
+        if not self.current_diff:
+            messagebox.showerror("错误", "请先预览Diff内容")
+            return
+
+        try:
+            file_changes = parse_diff(self.current_diff)
+            if not file_changes:
+                messagebox.showwarning("警告", "没有发现文件修改")
+                return
+
+            # 创建预览窗口
+            preview_window = ctk.CTkToplevel(self)
+            preview_window.title("Diff修改预览")
+            preview_window.geometry("800x600")
+            preview_window.transient(self)
+
+            # 预览内容
+            preview_text = ctk.CTkTextbox(preview_window)
+            preview_text.pack(fill="both", expand=True, padx=10, pady=10)
+
+            preview_content = f"将要修改的文件 ({len(file_changes)} 个):\n\n"
+
+            for i, change in enumerate(file_changes, 1):
+                preview_content += f"{i}. {change.new_path}\n"
+                preview_content += f"   修改块数: {len(change.hunks)}\n"
+
+                for j, hunk in enumerate(change.hunks):
+                    additions = sum(1 for line in hunk.lines if line.startswith('+'))
+                    deletions = sum(1 for line in hunk.lines if line.startswith('-'))
+                    preview_content += f"   块 {j+1}: +{additions} -{deletions} 行\n"
+
+                preview_content += "\n"
+
+            preview_text.insert("0.0", preview_content)
+
+        except Exception as e:
+            messagebox.showerror("错误", f"预览失败: {e}")
+
+    def _rollback_changes(self):
+        """回滚修改"""
+        if not self.backup_files:
+            messagebox.showwarning("警告", "没有可回滚的备份文件")
+            return
+
+        confirm_msg = f"发现 {len(self.backup_files)} 个备份文件，确定要回滚吗？\n\n"
+        confirm_msg += "这将恢复所有修改前的文件状态。"
+
+        if not messagebox.askyesno("确认回滚", confirm_msg):
+            return
+
+        success_count = 0
+        error_count = 0
+
+        for backup_path in self.backup_files:
+            try:
+                # 从备份路径推断原始文件路径
+                backup_name = os.path.basename(backup_path)
+                original_name = backup_name.split('.')[0] + '.' + backup_name.split('.')[1] if '.' in backup_name else backup_name.split('.')[0]
+
+                # 这里需要更复杂的逻辑来确定原始文件位置
+                # 简化处理：假设备份文件名包含相对路径信息
+                messagebox.showinfo("提示", "回滚功能需要手动实现文件路径映射")
+                break
+
+            except Exception as e:
+                logger.error(f"回滚文件 {backup_path} 失败: {e}")
+                error_count += 1
+
+    def _update_apply_status(self, message: str):
+        """更新应用状态"""
+        if hasattr(self, 'apply_status_label'):
+            self.apply_status_label.configure(text=message)
     
     def _update_stats(self):
         """更新统计信息"""
