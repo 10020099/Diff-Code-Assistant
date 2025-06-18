@@ -241,6 +241,20 @@ def validate_diff_advanced(diff_content: str) -> Tuple[bool, str, List[str]]:
     for line in lines:
         if line.startswith('--- ') or line.startswith('+++ '):
             path = line[4:].strip()
+
+            # 处理可能包含时间戳的路径格式
+            if '\t' in path:
+                path = path.split('\t')[0].strip()
+            elif '    ' in path and path.count('    ') == 1:
+                # 处理多个空格分隔的情况
+                path = path.split('    ')[0].strip()
+
+            # 移除git路径前缀
+            if path.startswith('a/'):
+                path = path[2:]
+            elif path.startswith('b/'):
+                path = path[2:]
+
             if path and path != '/dev/null':
                 file_paths.append(path)
 
@@ -332,6 +346,20 @@ def parse_diff(diff_content: str) -> List[FileChange]:
 
             # 开始新文件
             old_path = line[4:].strip()
+
+            # 处理可能包含时间戳的路径格式
+            # 格式可能是: "path/to/file.py    2024-01-01 00:00:01.000000000 +0000"
+            if '\t' in old_path:
+                old_path = old_path.split('\t')[0].strip()
+            else:
+                # 处理多个空格分隔的情况 - 更健壮的检测
+                # 查找连续的多个空格后跟日期格式
+                # 匹配路径后跟多个空格和时间戳的模式
+                match = re.match(r'^(.+?)\s{2,}\d{4}-\d{2}-\d{2}', old_path)
+                if match:
+                    old_path = match.group(1).strip()
+
+            # 移除git路径前缀
             if old_path.startswith('a/'):
                 old_path = old_path[2:]
             elif old_path.startswith('b/'):
@@ -340,6 +368,17 @@ def parse_diff(diff_content: str) -> List[FileChange]:
             # 查找对应的 +++ 行
             if i + 1 < len(lines) and lines[i + 1].startswith('+++ '):
                 new_path = lines[i + 1][4:].strip()
+
+                # 处理可能包含时间戳的路径格式
+                if '\t' in new_path:
+                    new_path = new_path.split('\t')[0].strip()
+                else:
+                    # 处理多个空格分隔的情况 - 更健壮的检测
+                    match = re.match(r'^(.+?)\s{2,}\d{4}-\d{2}-\d{2}', new_path)
+                    if match:
+                        new_path = match.group(1).strip()
+
+                # 移除git路径前缀
                 if new_path.startswith('a/'):
                     new_path = new_path[2:]
                 elif new_path.startswith('b/'):
@@ -460,7 +499,26 @@ def apply_hunk_to_lines(lines: List[str], hunk: DiffHunk) -> List[str]:
 def apply_diff_to_file(file_path: str, file_change: FileChange, project_root: str) -> bool:
     """将diff修改应用到单个文件"""
     try:
-        full_path = os.path.join(project_root, file_change.new_path)
+        # 清理文件路径，移除可能的时间戳信息
+        clean_path = file_change.new_path
+        if '\t' in clean_path:
+            clean_path = clean_path.split('\t')[0].strip()
+        else:
+            # 处理多个空格分隔的情况 - 更健壮的检测
+            match = re.match(r'^(.+?)\s{2,}\d{4}-\d{2}-\d{2}', clean_path)
+            if match:
+                clean_path = match.group(1).strip()
+
+        # 处理绝对路径的情况
+        if os.path.isabs(clean_path):
+            # 如果是绝对路径，尝试提取相对路径部分
+            # 例如：D:/迅雷下载/website-to-rss\main.py -> main.py
+            relative_path = os.path.basename(clean_path)
+            full_path = os.path.join(project_root, relative_path)
+        else:
+            # 如果是相对路径，与项目根目录拼接
+            full_path = os.path.join(project_root, clean_path)
+
 
         # 确保目录存在
         os.makedirs(os.path.dirname(full_path), exist_ok=True)
@@ -1169,11 +1227,26 @@ class DiffCodeAssistant(ctk.CTk):
                 total_files = len(file_changes)
 
                 for i, file_change in enumerate(file_changes):
+                    # 清理文件路径，移除可能的时间戳信息
+                    clean_path = file_change.new_path
+                    if '\t' in clean_path:
+                        clean_path = clean_path.split('\t')[0].strip()
+                    else:
+                        # 处理多个空格分隔的情况
+                        match = re.match(r'^(.+?)\s{2,}\d{4}-\d{2}-\d{2}', clean_path)
+                        if match:
+                            clean_path = match.group(1).strip()
+
                     progress.update_progress((i + 1) / total_files,
-                                           f"处理文件 {i + 1}/{total_files}: {file_change.new_path}")
+                                           f"处理文件 {i + 1}/{total_files}: {clean_path}")
 
                     try:
-                        file_path = os.path.join(self.project_root, file_change.new_path)
+                        # 处理绝对路径
+                        if os.path.isabs(clean_path):
+                            relative_path = os.path.basename(clean_path)
+                            file_path = os.path.join(self.project_root, relative_path)
+                        else:
+                            file_path = os.path.join(self.project_root, clean_path)
 
                         # 创建备份
                         if self.create_backup_var.get() and not self.dry_run_var.get():
@@ -1184,7 +1257,8 @@ class DiffCodeAssistant(ctk.CTk):
 
                         # 应用修改（除非是预览模式）
                         if not self.dry_run_var.get():
-                            if apply_diff_to_file(file_path, file_change, self.project_root):
+                            # 使用干净的文件路径（不包含时间戳）
+                            if apply_diff_to_file(clean_path, file_change, self.project_root):
                                 success_count += 1
                             else:
                                 error_count += 1
@@ -1192,7 +1266,7 @@ class DiffCodeAssistant(ctk.CTk):
                             success_count += 1  # 预览模式都算成功
 
                     except Exception as e:
-                        logger.error(f"处理文件 {file_change.new_path} 失败: {e}")
+                        logger.error(f"处理文件 {clean_path} 失败: {e}")
                         error_count += 1
 
                 progress.update_progress(1.0, "应用完成")
