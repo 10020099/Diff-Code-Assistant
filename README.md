@@ -195,12 +195,3 @@ MIT License
 ## 🤝 贡献
 
 欢迎提交Issue和Pull Request!
-
-## 🌟 致谢
-
-- CustomTkinter - 现代UI框架
-- 赛博朋克文化 - 视觉灵感
-
----
-
-**享受赛博朋克风格的代码重构之旅!** 🌐✨
