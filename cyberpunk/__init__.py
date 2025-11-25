@@ -33,7 +33,8 @@ __author__ = 'Cyberpunk UI Team'
 __license__ = 'MIT'
 
 # 核心模块
-from .colors import CyberpunkColors, ColorScheme
+from . import colors
+from .colors import ColorScheme
 from .theme import CyberpunkTheme
 
 # 组件基类
@@ -132,8 +133,8 @@ from .effects import (
 )
 
 # 工具函数
-from .utils.animations import AnimationUtils
-from .utils.validators import Validators
+from .utils import animations
+from .utils import validators
 
 # 导出列表
 __all__ = [
@@ -143,7 +144,7 @@ __all__ = [
     '__license__',
     
     # 核心
-    'CyberpunkColors',
+    'colors',
     'ColorScheme',
     'CyberpunkTheme',
     
@@ -226,10 +227,10 @@ __all__ = [
     'PresetManager',
     
     # 工具
-    'AnimationUtils',
-    'Validators',
+    'animations',
+    'validators',
 ]
 
 # 快捷访问
-colors = CyberpunkColors
+# colors is already available as a module
 theme = CyberpunkTheme
