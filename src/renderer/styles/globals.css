@@ -1,0 +1,442 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ================================
+   赛博朋克全局样式
+   ================================ */
+
+:root {
+  /* 主色系 */
+  --neon-cyan: #00f3ff;
+  --neon-magenta: #ff00e5;
+  --neon-purple: #b300ff;
+  --neon-blue: #0080ff;
+  --neon-green: #00ff88;
+  
+  /* 背景色系 */
+  --deep-space: #0a0e1a;
+  --dark-void: #151b2e;
+  --night-blue: #1a2332;
+  --shadow-gray: #1e2738;
+  
+  /* 文本色系 */
+  --cyber-gray: #8892b0;
+  --steel-blue: #a8b2d1;
+  --ghost-white: #e6f1ff;
+  --muted-cyan: #64ffda;
+  
+  /* 功能色系 */
+  --error-red: #ff3366;
+  --warning-orange: #ffaa00;
+  --success-green: #00ff88;
+  --info-blue: #00b8ff;
+  
+  /* 当前主题色 */
+  --primary: var(--neon-cyan);
+  --secondary: var(--neon-magenta);
+  --accent: var(--neon-purple);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: 'Segoe UI', Arial, Helvetica, sans-serif;
+  background-color: var(--deep-space);
+  color: var(--ghost-white);
+  line-height: 1.6;
+}
+
+/* 滚动条样式 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--night-blue);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--shadow-gray);
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--primary);
+}
+
+/* 选中文本样式 */
+::selection {
+  background: rgba(0, 243, 255, 0.3);
+  color: var(--ghost-white);
+}
+
+/* 代码字体 */
+code, pre, .font-mono {
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+}
+
+/* ================================
+   动画效果
+   ================================ */
+
+@keyframes pulse-neon {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes glow {
+  0% { 
+    box-shadow: 0 0 5px var(--primary), 0 0 10px var(--primary);
+  }
+  100% { 
+    box-shadow: 0 0 10px var(--primary), 0 0 20px var(--primary), 0 0 30px var(--primary);
+  }
+}
+
+@keyframes scanline {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(100vh); }
+}
+
+@keyframes glitch {
+  0%, 100% { transform: translate(0); }
+  20% { transform: translate(-2px, 2px); }
+  40% { transform: translate(-2px, -2px); }
+  60% { transform: translate(2px, 2px); }
+  80% { transform: translate(2px, -2px); }
+}
+
+@keyframes text-flicker {
+  0%, 100% { opacity: 1; }
+  92% { opacity: 1; }
+  93% { opacity: 0.3; }
+  94% { opacity: 1; }
+  95% { opacity: 0.5; }
+  96% { opacity: 1; }
+}
+
+@keyframes border-glow {
+  0%, 100% {
+    border-color: var(--primary);
+    box-shadow: 0 0 5px var(--primary);
+  }
+  50% {
+    border-color: var(--secondary);
+    box-shadow: 0 0 10px var(--secondary);
+  }
+}
+
+/* ================================
+   组件基础样式
+   ================================ */
+
+.cyber-card {
+  background: var(--night-blue);
+  border: 1px solid var(--shadow-gray);
+  border-radius: 8px;
+  padding: 16px;
+  transition: all 0.3s ease;
+}
+
+.cyber-card:hover {
+  border-color: var(--primary);
+  box-shadow: 0 0 10px rgba(0, 243, 255, 0.2);
+}
+
+.cyber-button {
+  background: var(--primary);
+  color: var(--deep-space);
+  border: none;
+  border-radius: 6px;
+  padding: 8px 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.cyber-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 0 15px var(--primary);
+}
+
+.cyber-button:active {
+  transform: translateY(0);
+}
+
+.cyber-button-secondary {
+  background: transparent;
+  color: var(--primary);
+  border: 2px solid var(--primary);
+}
+
+.cyber-button-secondary:hover {
+  background: rgba(0, 243, 255, 0.1);
+}
+
+.cyber-input {
+  background: var(--night-blue);
+  border: 2px solid var(--shadow-gray);
+  border-radius: 6px;
+  padding: 10px 14px;
+  color: var(--ghost-white);
+  font-size: 14px;
+  transition: all 0.2s ease;
+  width: 100%;
+}
+
+.cyber-input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 10px rgba(0, 243, 255, 0.2);
+}
+
+.cyber-input::placeholder {
+  color: var(--cyber-gray);
+}
+
+.cyber-textarea {
+  background: var(--night-blue);
+  border: 2px solid var(--shadow-gray);
+  border-radius: 6px;
+  padding: 12px 14px;
+  color: var(--ghost-white);
+  font-family: 'Consolas', monospace;
+  font-size: 13px;
+  resize: vertical;
+  min-height: 100px;
+  transition: all 0.2s ease;
+  width: 100%;
+}
+
+.cyber-textarea:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 10px rgba(0, 243, 255, 0.2);
+}
+
+/* ================================
+   标签页样式
+   ================================ */
+
+.cyber-tabs {
+  display: flex;
+  gap: 4px;
+  background: var(--dark-void);
+  padding: 4px;
+  border-radius: 8px;
+}
+
+.cyber-tab {
+  padding: 10px 20px;
+  background: transparent;
+  border: none;
+  color: var(--cyber-gray);
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+}
+
+.cyber-tab:hover {
+  color: var(--ghost-white);
+  background: rgba(0, 243, 255, 0.1);
+}
+
+.cyber-tab.active {
+  background: var(--primary);
+  color: var(--deep-space);
+}
+
+/* ================================
+   Diff 显示样式
+   ================================ */
+
+.diff-viewer {
+  font-family: 'Consolas', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  background: var(--deep-space);
+  border-radius: 6px;
+  overflow: auto;
+}
+
+.diff-line {
+  padding: 2px 12px;
+  white-space: pre;
+}
+
+.diff-line-add {
+  background: rgba(0, 255, 136, 0.1);
+  color: var(--success-green);
+}
+
+.diff-line-delete {
+  background: rgba(255, 51, 102, 0.1);
+  color: var(--error-red);
+}
+
+.diff-line-header {
+  color: var(--neon-cyan);
+  font-weight: bold;
+}
+
+.diff-line-hunk {
+  color: var(--neon-purple);
+  background: rgba(179, 0, 255, 0.1);
+}
+
+/* ================================
+   文件树样式
+   ================================ */
+
+.file-tree {
+  font-size: 13px;
+}
+
+.file-tree-item {
+  display: flex;
+  align-items: center;
+  padding: 6px 8px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+.file-tree-item:hover {
+  background: rgba(0, 243, 255, 0.1);
+}
+
+.file-tree-item.selected {
+  background: rgba(0, 243, 255, 0.2);
+}
+
+.file-tree-checkbox {
+  width: 16px;
+  height: 16px;
+  margin-right: 8px;
+  accent-color: var(--primary);
+}
+
+/* ================================
+   进度条样式
+   ================================ */
+
+.cyber-progress {
+  height: 8px;
+  background: var(--shadow-gray);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.cyber-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, var(--primary), var(--secondary));
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+/* ================================
+   工具提示样式
+   ================================ */
+
+.cyber-tooltip {
+  position: relative;
+}
+
+.cyber-tooltip::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  background: var(--night-blue);
+  border: 1px solid var(--primary);
+  border-radius: 4px;
+  font-size: 12px;
+  white-space: nowrap;
+  opacity: 0;
+  visibility: hidden;
+  transition: all 0.2s ease;
+}
+
+.cyber-tooltip:hover::after {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* ================================
+   扫描线特效
+   ================================ */
+
+.scanline-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 9999;
+  overflow: hidden;
+}
+
+.scanline {
+  position: absolute;
+  width: 100%;
+  height: 4px;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    rgba(0, 243, 255, 0.1),
+    transparent
+  );
+  animation: scanline 8s linear infinite;
+}
+
+/* ================================
+   霓虹发光效果
+   ================================ */
+
+.neon-glow {
+  text-shadow: 
+    0 0 5px var(--primary),
+    0 0 10px var(--primary),
+    0 0 20px var(--primary);
+}
+
+.neon-border {
+  border: 2px solid var(--primary);
+  box-shadow: 
+    0 0 5px var(--primary),
+    inset 0 0 5px rgba(0, 243, 255, 0.1);
+}
+
+/* ================================
+   响应式调整
+   ================================ */
+
+@media (max-width: 768px) {
+  .cyber-tabs {
+    flex-wrap: wrap;
+  }
+  
+  .cyber-tab {
+    flex: 1;
+    min-width: 100px;
+    text-align: center;
+  }
+}
