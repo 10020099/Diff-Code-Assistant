@@ -1,12 +1,11 @@
 import { ipcMain } from 'electron'
 import * as fs from 'fs'
 import * as path from 'path'
-import { 
-  parseDiff, 
-  validateDiff, 
+import {
+  parseDiff,
+  validateDiff,
   applyDiffToContent,
-  cleanFilePath,
-  FileChange 
+  cleanFilePath
 } from '../utils/diffParser'
 
 export interface ApplyDiffResult {
@@ -52,8 +51,8 @@ export function registerDiffHandlers(): void {
       // 验证 diff
       const validation = validateDiff(diffContent)
       if (!validation.isValid) {
+        result.success = false
         return {
-          success: false,
           error: validation.message,
           ...result
         }
@@ -62,18 +61,27 @@ export function registerDiffHandlers(): void {
       // 解析 diff
       const fileChanges = parseDiff(diffContent)
       if (fileChanges.length === 0) {
+        result.success = false
         return {
-          success: false,
           error: '无法解析Diff内容或没有发现文件修改',
           ...result
         }
       }
 
-      // 创建备份目录
-      let backupDir: string | undefined
+      // 准备备份
+      const backupDir = path.join(projectRoot, '.diff_backups')
+      const timestamp = (() => {
+        const now = new Date()
+        const y = now.getFullYear()
+        const m = String(now.getMonth() + 1).padStart(2, '0')
+        const d = String(now.getDate()).padStart(2, '0')
+        const h = String(now.getHours()).padStart(2, '0')
+        const min = String(now.getMinutes()).padStart(2, '0')
+        const s = String(now.getSeconds()).padStart(2, '0')
+        return `${y}${m}${d}-${h}${min}${s}`
+      })()
+
       if (createBackup && !dryRun) {
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
-        backupDir = path.join(projectRoot, '.diff_backups', timestamp)
         await fs.promises.mkdir(backupDir, { recursive: true })
         result.backupDir = backupDir
       }
@@ -82,7 +90,7 @@ export function registerDiffHandlers(): void {
       for (const fileChange of fileChanges) {
         try {
           const cleanPath = cleanFilePath(fileChange.newPath)
-          const fullPath = path.isAbsolute(cleanPath) 
+          const fullPath = path.isAbsolute(cleanPath)
             ? path.join(projectRoot, path.basename(cleanPath))
             : path.join(projectRoot, cleanPath)
 
@@ -90,11 +98,17 @@ export function registerDiffHandlers(): void {
           let originalContent = ''
           if (fs.existsSync(fullPath)) {
             originalContent = await fs.promises.readFile(fullPath, 'utf-8')
-            
-            // 创建备份
-            if (createBackup && !dryRun && backupDir) {
-              const backupPath = path.join(backupDir, path.basename(fullPath))
-              await fs.promises.writeFile(backupPath, originalContent, 'utf-8')
+
+            // 创建备份（文件名带时间戳，放在同一个文件夹）
+            if (createBackup && !dryRun) {
+              const relativePath = path.relative(projectRoot, fullPath)
+              const flatName = relativePath.replace(/[\\/]/g, '__')
+              const backupFileName = `${flatName}.${timestamp}.bak`
+              await fs.promises.writeFile(
+                path.join(backupDir, backupFileName),
+                originalContent,
+                'utf-8'
+              )
             }
           }
 
@@ -103,7 +117,6 @@ export function registerDiffHandlers(): void {
 
           // 写入文件（非预览模式）
           if (!dryRun) {
-            // 确保目录存在
             await fs.promises.mkdir(path.dirname(fullPath), { recursive: true })
             await fs.promises.writeFile(fullPath, newContent, 'utf-8')
           }
@@ -115,13 +128,39 @@ export function registerDiffHandlers(): void {
         }
       }
 
+      // 自动清理：每个原始文件只保留最近5份备份
+      if (createBackup && !dryRun) {
+        try {
+          const allFiles = await fs.promises.readdir(backupDir)
+          const groups = new Map<string, { name: string; ts: string }[]>()
+
+          for (const file of allFiles) {
+            const match = file.match(/^(.+)\.(\d{8}-\d{6})\.bak$/)
+            if (!match) continue
+            const key = match[1] // 扁平化的原始路径
+            if (!groups.has(key)) groups.set(key, [])
+            groups.get(key)!.push({ name: file, ts: match[2] })
+          }
+
+          for (const [, backups] of groups) {
+            if (backups.length <= 5) continue
+            backups.sort((a, b) => b.ts.localeCompare(a.ts))
+            for (const old of backups.slice(5)) {
+              await fs.promises.unlink(path.join(backupDir, old.name)).catch(() => { })
+            }
+          }
+        } catch {
+          // 清理失败不影响主流程
+        }
+      }
+
       result.success = result.errorCount === 0
       return result
     } catch (error) {
       return {
-        success: false,
         error: String(error),
-        ...result
+        ...result,
+        success: false
       }
     }
   })

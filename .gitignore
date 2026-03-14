@@ -38,3 +38,10 @@ coverage/
 # Misc
 *.bak
 *.tmp
+
+# App runtime data
+.diff_backups/
+
+# AI tools
+.gemini/
+.agents/

@@ -4,6 +4,8 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerFileHandlers } from './ipc/fileHandlers'
 import { registerDiffHandlers } from './ipc/diffHandlers'
 import { registerBackupHandlers } from './ipc/backupHandlers'
+import { registerConfigHandlers } from './ipc/configHandlers'
+import { registerLLMHandlers } from './ipc/llmHandlers'
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -55,6 +57,8 @@ app.whenReady().then(() => {
   registerFileHandlers()
   registerDiffHandlers()
   registerBackupHandlers()
+  registerConfigHandlers()
+  registerLLMHandlers()
 
   // 选择目录对话框
   ipcMain.handle('dialog:openDirectory', async () => {

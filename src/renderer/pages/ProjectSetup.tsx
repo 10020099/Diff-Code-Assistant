@@ -32,6 +32,25 @@ declare global {
         writeText: (text: string) => Promise<void>
         readText: () => Promise<string>
       }
+      llm: {
+        chat: (providerConfig: any, messages: any[], systemPrompt?: string) => Promise<any>
+        chatStream: (providerConfig: any, messages: any[], systemPrompt?: string) => Promise<any>
+        stopStream: () => Promise<any>
+        testConnection: (providerConfig: any) => Promise<any>
+        onStreamToken: (callback: (data: { content: string }) => void) => () => void
+        onStreamDone: (callback: (data: { content: string; usage?: any; aborted?: boolean }) => void) => () => void
+        onStreamError: (callback: (data: { error: string }) => void) => () => void
+      }
+      config: {
+        save: (config: any) => Promise<any>
+        load: () => Promise<any>
+      }
+      conversation: {
+        save: (conversation: any) => Promise<any>
+        list: () => Promise<any>
+        load: (id: string) => Promise<any>
+        delete: (id: string) => Promise<any>
+      }
     }
   }
 }

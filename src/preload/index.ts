@@ -42,13 +42,57 @@ const clipboardAPI = {
   readText: () => navigator.clipboard.readText()
 }
 
+// LLM API
+const llmAPI = {
+  chat: (providerConfig: unknown, messages: unknown[], systemPrompt?: string) =>
+    ipcRenderer.invoke('llm:chat', providerConfig, messages, systemPrompt),
+  chatStream: (providerConfig: unknown, messages: unknown[], systemPrompt?: string) =>
+    ipcRenderer.invoke('llm:chatStream', providerConfig, messages, systemPrompt),
+  stopStream: () => ipcRenderer.invoke('llm:stopStream'),
+  testConnection: (providerConfig: unknown) =>
+    ipcRenderer.invoke('llm:testConnection', providerConfig),
+  // 流式事件监听
+  onStreamToken: (callback: (data: { content: string }) => void) => {
+    const handler = (_event: unknown, data: { content: string }) => callback(data)
+    ipcRenderer.on('llm:stream-token', handler)
+    return () => ipcRenderer.removeListener('llm:stream-token', handler)
+  },
+  onStreamDone: (callback: (data: { content: string; usage?: unknown; aborted?: boolean }) => void) => {
+    const handler = (_event: unknown, data: { content: string; usage?: unknown; aborted?: boolean }) => callback(data)
+    ipcRenderer.on('llm:stream-done', handler)
+    return () => ipcRenderer.removeListener('llm:stream-done', handler)
+  },
+  onStreamError: (callback: (data: { error: string }) => void) => {
+    const handler = (_event: unknown, data: { error: string }) => callback(data)
+    ipcRenderer.on('llm:stream-error', handler)
+    return () => ipcRenderer.removeListener('llm:stream-error', handler)
+  }
+}
+
+// 配置 API
+const configAPI = {
+  save: (config: unknown) => ipcRenderer.invoke('config:save', config),
+  load: () => ipcRenderer.invoke('config:load')
+}
+
+// 对话历史 API
+const conversationAPI = {
+  save: (conversation: unknown) => ipcRenderer.invoke('conversation:save', conversation),
+  list: () => ipcRenderer.invoke('conversation:list'),
+  load: (conversationId: string) => ipcRenderer.invoke('conversation:load', conversationId),
+  delete: (conversationId: string) => ipcRenderer.invoke('conversation:delete', conversationId)
+}
+
 // 自定义 API
 const api = {
   file: fileAPI,
   diff: diffAPI,
   backup: backupAPI,
   dialog: dialogAPI,
-  clipboard: clipboardAPI
+  clipboard: clipboardAPI,
+  llm: llmAPI,
+  config: configAPI,
+  conversation: conversationAPI
 }
 
 // 暴露 API 到渲染进程

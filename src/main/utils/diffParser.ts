@@ -225,57 +225,36 @@ export function parseDiff(diffContent: string): FileChange[] {
  * 将 hunk 应用到文件行
  */
 export function applyHunkToLines(lines: string[], hunk: DiffHunk): string[] {
-  const result = [...lines]
-  const startLine = hunk.oldStart - 1
-  
-  // 收集要删除和添加的行
-  const toDelete: Array<{ lineIdx: number; content: string }> = []
-  const toAdd: Array<{ lineIdx: number; content: string }> = []
-  let currentLine = startLine
+  const startLine = hunk.oldStart - 1 // 0-indexed
 
-  for (const line of hunk.lines) {
-    if (line.startsWith(' ')) {
-      currentLine++
-    } else if (line.startsWith('-')) {
-      toDelete.push({ lineIdx: currentLine, content: line.slice(1) })
-      currentLine++
-    } else if (line.startsWith('+')) {
-      toAdd.push({ lineIdx: currentLine, content: line.slice(1) })
+  // 构建结果：保留 hunk 之前的行
+  const result: string[] = []
+
+  // 1. 复制 hunk 起始行之前的所有行
+  for (let i = 0; i < startLine && i < lines.length; i++) {
+    result.push(lines[i])
+  }
+
+  // 2. 按顺序处理 hunk 中的行
+  let oldLineIdx = startLine // 当前原文件的行指针
+
+  for (const hunkLine of hunk.lines) {
+    if (hunkLine.startsWith(' ')) {
+      // 上下文行：原样保留，推进原文件指针
+      result.push(lines[oldLineIdx] !== undefined ? lines[oldLineIdx] : hunkLine.slice(1))
+      oldLineIdx++
+    } else if (hunkLine.startsWith('-')) {
+      // 删除行：跳过原文件中的这一行（不加入结果）
+      oldLineIdx++
+    } else if (hunkLine.startsWith('+')) {
+      // 添加行：加入结果，不推进原文件指针
+      result.push(hunkLine.slice(1))
     }
   }
 
-  // 从后往前删除行
-  for (const { lineIdx, content } of toDelete.reverse()) {
-    if (lineIdx < result.length) {
-      if (result[lineIdx].trimEnd() === content.trimEnd()) {
-        result.splice(lineIdx, 1)
-      } else {
-        console.warn(`要删除的行内容不匹配在行 ${lineIdx + 1}`)
-      }
-    }
-  }
-
-  // 添加新行
-  currentLine = startLine
-  let insertOffset = 0
-
-  for (const line of hunk.lines) {
-    if (line.startsWith(' ')) {
-      currentLine++
-    } else if (line.startsWith('-')) {
-      insertOffset--
-      currentLine++
-    } else if (line.startsWith('+')) {
-      const addContent = line.slice(1)
-      const insertPos = currentLine + insertOffset
-      if (insertPos <= result.length) {
-        result.splice(insertPos, 0, addContent)
-        insertOffset++
-      } else {
-        result.push(addContent)
-        insertOffset++
-      }
-    }
+  // 3. 复制 hunk 之后的剩余行
+  for (let i = oldLineIdx; i < lines.length; i++) {
+    result.push(lines[i])
   }
 
   return result
