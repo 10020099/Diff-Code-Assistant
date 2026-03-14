@@ -39,6 +39,10 @@ export function registerLLMHandlers(): void {
       messages: ChatMessage[],
       systemPrompt?: string
     ) => {
+      // 10 分钟总超时
+      const STREAM_TIMEOUT_MS = 10 * 60 * 1000
+      let timeoutId: ReturnType<typeof setTimeout> | null = null
+
       try {
         const provider = createProvider(providerConfig)
         const window = BrowserWindow.fromWebContents(event.sender)
@@ -50,6 +54,10 @@ export function registerLLMHandlers(): void {
         activeStreamAbortController = new AbortController()
         let fullContent = ''
         let aborted = false
+
+        timeoutId = setTimeout(() => {
+          activeStreamAbortController?.abort()
+        }, STREAM_TIMEOUT_MS)
 
         const generator = provider.chatStream(messages, systemPrompt)
 
@@ -90,6 +98,7 @@ export function registerLLMHandlers(): void {
           }
         }
 
+        clearTimeout(timeoutId)
         activeStreamAbortController = null
 
         if (aborted) {
@@ -103,6 +112,7 @@ export function registerLLMHandlers(): void {
 
         return { success: true, content: fullContent }
       } catch (error) {
+        if (timeoutId) clearTimeout(timeoutId)
         activeStreamAbortController = null
         return { success: false, error: String(error) }
       }
